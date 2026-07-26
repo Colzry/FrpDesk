@@ -2,6 +2,16 @@
 
 一个使用 Rust 开发的 Windows frpc 桌面管理工具，基于 [GPUI](https://github.com/zed-industries/zed) 构建现代化原生图形界面，用于管理多个 [frpc](https://github.com/fatedier/frp) 实例。
 
+## 界面预览
+
+**配置列表**
+
+![配置列表](image/config.png)
+
+**设置页面**
+
+![设置页面](image/settings.png)
+
 ## 功能特性
 
 - **多配置管理**：添加、编辑、删除多个 frpc 配置，每个配置独立运行
@@ -17,16 +27,6 @@
 - **TOML 代码高亮**：配置编辑器支持 TOML 语法高亮显示
 - **进程守护**：注册 Windows 服务后可开启，服务在后台持续监控 frpc 进程，异常退出时自动重启，通过命名管道与 UI 协调
 - **健康检查**：后台周期性监控 frpc 进程状态，异常退出自动更新界面
-
-## 界面预览
-
-**配置列表**
-
-![配置列表](image/config.png)
-
-**设置页面**
-
-![设置页面](image/settings.png)
 
 ## 使用说明
 
