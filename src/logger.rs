@@ -87,6 +87,31 @@ static LOG_LEVEL: Mutex<LevelFilter> = Mutex::new(LevelFilter::Info);
 /// 日志系统句柄，用于运行时动态调整日志级别
 static LOG_HANDLE: OnceLock<log4rs::Handle> = OnceLock::new();
 
+/// 过滤 gpui/gpui_windows 在窗口生命周期切换（创建/销毁）时产生的已知无害错误日志。
+///
+/// 应用退出或窗口销毁时，gpui_windows 会用已失效的 HWND 调用 RevokeDragDrop / DestroyWindow
+/// （OLE 拖放目标回收与窗口销毁通知），gpui 内部也会用已失效的句柄查询窗口，这些都会报错，
+/// 但不影响功能，只是日志噪音：
+/// - "window not found"                          — gpui 查询已销毁的窗口
+/// - "(0x80040102)" DRAGDROP_E_INVALIDHWND      — 拖放目标回收时窗口句柄已失效
+/// - "(0x80070578)" ERROR_INVALID_WINDOW_HANDLE — 窗口销毁时窗口句柄已失效
+#[derive(Debug)]
+struct SuppressWindowLifecycleNoise;
+
+impl log4rs::filter::Filter for SuppressWindowLifecycleNoise {
+    fn filter(&self, record: &log::Record) -> log4rs::filter::Response {
+        let msg = record.args().to_string();
+        if msg.contains("window not found")
+            || msg.contains("(0x80040102)")
+            || msg.contains("(0x80070578)")
+        {
+            log4rs::filter::Response::Reject
+        } else {
+            log4rs::filter::Response::Neutral
+        }
+    }
+}
+
 /// 初始化日志系统，并启动后台线程在每天零点自动切换日志文件
 pub fn init_logging() -> Result<()> {
     let exe_path = env::current_exe().context("无法获取可执行文件路径")?;
@@ -131,7 +156,11 @@ fn build_log_config(logs_dir: &Path, level: LevelFilter) -> Result<Config> {
     let writer = ResilientWriter::new(log_file);
 
     Config::builder()
-        .appender(Appender::builder().build("logfile", Box::new(writer)))
+        .appender(
+            Appender::builder()
+                .filter(Box::new(SuppressWindowLifecycleNoise))
+                .build("logfile", Box::new(writer)),
+        )
         .build(Root::builder().appender("logfile").build(level))
         .context("无法构建日志配置")
 }

@@ -313,7 +313,7 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> gpui::AnyElement
                             cx.theme().danger
                         })
                         .child(if view.service_registered {
-                            "开启后，frpc 进程异常退出时会自动重启。"
+                            "开启后，设置开机自启动的配置会立即启动；frpc 进程异常退出时会自动重启。"
                         } else {
                             "请先注册服务后再开启进程守护。"
                         }),
