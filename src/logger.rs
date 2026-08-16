@@ -11,7 +11,7 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 /// 自适应文件写入器：每次写入时以 append + create 模式打开文件，
@@ -82,6 +82,11 @@ impl Append for ResilientWriter {
     }
 }
 
+/// 当前日志级别，供轮转线程和运行时切换使用
+static LOG_LEVEL: Mutex<LevelFilter> = Mutex::new(LevelFilter::Info);
+/// 日志系统句柄，用于运行时动态调整日志级别
+static LOG_HANDLE: OnceLock<log4rs::Handle> = OnceLock::new();
+
 /// 初始化日志系统，并启动后台线程在每天零点自动切换日志文件
 pub fn init_logging() -> Result<()> {
     let exe_path = env::current_exe().context("无法获取可执行文件路径")?;
@@ -90,10 +95,18 @@ pub fn init_logging() -> Result<()> {
     let logs_dir = exe_dir.join("logs");
     fs::create_dir_all(&logs_dir).context("无法创建日志目录")?;
 
+    // 从设置中读取日志级别（未设置或非法时回退到 Info）
+    let level = crate::config::load_settings()
+        .log_level
+        .parse()
+        .unwrap_or(LevelFilter::Info);
+
     // 构建今天的日志配置
-    let config = build_log_config(&logs_dir)?;
+    let config = build_log_config(&logs_dir, level)?;
 
     let handle = log4rs::init_config(config).context("无法初始化日志")?;
+    *LOG_LEVEL.lock().unwrap() = level;
+    let _ = LOG_HANDLE.set(handle.clone());
 
     // 确认日志文件已创建并写入首条记录
     log::info!("日志系统初始化完成，日志目录: {:?}", logs_dir);
@@ -111,7 +124,7 @@ pub fn init_logging() -> Result<()> {
 }
 
 /// 构建指向当天日志文件的 Config
-fn build_log_config(logs_dir: &Path) -> Result<Config> {
+fn build_log_config(logs_dir: &Path, level: LevelFilter) -> Result<Config> {
     let today = Local::now().format("%Y-%m-%d").to_string();
     let log_file = logs_dir.join(format!("{}.log", today));
 
@@ -119,8 +132,23 @@ fn build_log_config(logs_dir: &Path) -> Result<Config> {
 
     Config::builder()
         .appender(Appender::builder().build("logfile", Box::new(writer)))
-        .build(Root::builder().appender("logfile").build(LevelFilter::Info))
+        .build(Root::builder().appender("logfile").build(level))
         .context("无法构建日志配置")
+}
+
+/// 运行时切换日志级别
+pub fn set_log_level(level: LevelFilter) -> Result<()> {
+    let exe_path = env::current_exe().context("无法获取可执行文件路径")?;
+    let exe_dir = exe_path.parent().context("无法获取可执行文件目录")?;
+    let logs_dir = exe_dir.join("logs");
+
+    let config = build_log_config(&logs_dir, level)?;
+    if let Some(handle) = LOG_HANDLE.get() {
+        handle.set_config(config);
+    }
+    *LOG_LEVEL.lock().unwrap() = level;
+    log::info!("日志级别已切换为: {}", level);
+    Ok(())
 }
 
 /// 后台日志轮转循环：每天零点切换到新的日志文件并清理过期日志
@@ -143,7 +171,8 @@ fn log_rotation_loop(handle: log4rs::Handle, logs_dir: &Path) {
         // 切换到新日期的日志文件
         let today = Local::now().format("%Y-%m-%d").to_string();
         if today != last_date {
-            match build_log_config(logs_dir) {
+            let level = *LOG_LEVEL.lock().unwrap();
+            match build_log_config(logs_dir, level) {
                 Ok(new_config) => {
                     handle.set_config(new_config);
                     log::info!("日志文件已切换到 {}", today);
