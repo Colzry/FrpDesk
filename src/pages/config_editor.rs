@@ -5,7 +5,7 @@ use crate::message;
 use gpui::prelude::*;
 use gpui::{div, px, FontWeight};
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::Input;
+use gpui_component::input::{Editor, Input};
 use gpui_component::switch::Switch;
 use gpui_component::ActiveTheme;
 
@@ -87,7 +87,7 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> gpui::AnyElement
                         .text_color(cx.theme().foreground)
                         .child("配置内容 (TOML)"),
                 )
-                .child(Input::new(&view.content_input).h_full()),
+                .child(Editor::new(&view.content_input).h_full()),
         )
         // 自启动开关
         .child(

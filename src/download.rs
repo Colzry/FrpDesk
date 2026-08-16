@@ -94,6 +94,32 @@ fn download_with_progress(
 /// 需要从 zip 中提取的文件名
 const EXTRACT_FILES: &[&str] = &["frpc.exe"];
 
+/// 解压失败且原因是 frpc.exe 被运行中的进程占用（Windows 下无法替换运行中的 exe）
+#[derive(Debug)]
+struct FileInUseError;
+
+impl std::fmt::Display for FileInUseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "frpc.exe 正在运行，文件被占用")
+    }
+}
+
+impl std::error::Error for FileInUseError {}
+
+/// 判断错误是否为 Windows 下“文件被进程占用/锁定”
+fn is_file_in_use_err(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        // ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, ERROR_LOCK_VIOLATION=33
+        matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = e;
+        false
+    }
+}
+
 /// 从 zip 文件中提取 frpc.exe 到目标目录（bin/）
 fn extract_frpc_from_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
     // 确保 bin/ 目录存在
@@ -116,9 +142,44 @@ fn extract_frpc_from_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
         // 只提取 frpc.exe（可能在子目录中，如 frp_0.70.0_windows_amd64/）
         if EXTRACT_FILES.contains(&file_name.as_str()) {
             let out_path = dest_dir.join(&*file_name);
-            let mut out_file =
-                fs::File::create(&out_path).context(format!("无法创建 {}", file_name))?;
-            std::io::copy(&mut entry, &mut out_file).context(format!("解压 {} 失败", file_name))?;
+            let tmp_path = dest_dir.join(format!("{}.tmp", file_name));
+
+            // 先解压到临时文件，避免中途失败破坏现有的 frpc.exe
+            let mut out_file = match fs::File::create(&tmp_path) {
+                Ok(f) => f,
+                Err(e) => return Err(anyhow::anyhow!("无法创建 {}: {}", file_name, e)),
+            };
+            if let Err(e) = std::io::copy(&mut entry, &mut out_file) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(anyhow::anyhow!("解压 {} 失败: {}", file_name, e));
+            }
+            drop(out_file);
+
+            // 用临时文件替换目标文件。Windows 下若 frpc.exe 正在运行，重命名会失败；
+            // 这里重试几次以容忍杀毒软件等造成的短暂文件占用。
+            let mut last_err: Option<std::io::Error> = None;
+            for _ in 0..3 {
+                match fs::rename(&tmp_path, &out_path) {
+                    Ok(()) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
+                }
+            }
+            let _ = fs::remove_file(&tmp_path);
+
+            if let Some(e) = last_err {
+                if is_file_in_use_err(&e) {
+                    // frpc.exe 正被运行中的进程锁定，无法替换
+                    return Err(FileInUseError.into());
+                }
+                return Err(anyhow::anyhow!("无法替换 {}: {}", file_name, e));
+            }
+
             log::info!("已将 {} 解压到 {:?}", file_name, out_path);
             if file_name == "frpc.exe" {
                 found_exe = true;
@@ -243,6 +304,12 @@ pub fn download_and_extract_frpc(
                     }
                     Err(e) => {
                         let _ = fs::remove_file(&zip_path);
+                        // frpc.exe 被运行中的进程占用：换镜像重试毫无意义（每次都会解压失败），直接返回
+                        if e.downcast_ref::<FileInUseError>().is_some() {
+                            return Err(anyhow::anyhow!(
+                                "frpc.exe 正在运行或已被占用，无法替换。请先停止所有 frpc 进程后重试。"
+                            ));
+                        }
                         last_error = format!("解压失败: {}", e);
                         log::warn!("解压失败 ({}): {}", url, e);
                         continue;

@@ -41,12 +41,21 @@ pub struct AppSettings {
     /// 进程守护：开启后服务模式下进程异常退出会自动重启
     #[serde(default)]
     pub process_guard: bool,
+    /// 日志级别: off / error / warn / info / debug / trace
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+}
+
+/// 默认日志级别
+fn default_log_level() -> String {
+    "info".to_string()
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             process_guard: false,
+            log_level: default_log_level(),
         }
     }
 }

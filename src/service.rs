@@ -132,6 +132,7 @@ pub fn wait_process_changed(timeout_ms: u32) -> bool {
 pub fn send_guard_stopped_command(command: &str) {
     // 重试 3 次，每次间隔 50ms，应对管道短暂不可用的情况
     // （DisconnectNamedPipe 到下一次 CreateNamedPipeW 之间的间隙）
+    let mut last_error: u32 = 0;
     for attempt in 0..3u32 {
         unsafe {
             let handle = CreateFileW(
@@ -144,16 +145,12 @@ pub fn send_guard_stopped_command(command: &str) {
                 0,
             );
             if handle == INVALID_HANDLE_VALUE {
+                last_error = GetLastError();
                 if attempt < 2 {
                     std::thread::sleep(Duration::from_millis(50));
                     continue;
                 }
-                log::error!(
-                    "无法连接到命名管道 {}（已重试 {} 次）",
-                    PIPE_NAME,
-                    attempt + 1
-                );
-                return;
+                break;
             }
             let data = format!("{}\n", command);
             let mut bytes_written = 0u32;
@@ -168,6 +165,20 @@ pub fn send_guard_stopped_command(command: &str) {
             CloseHandle(handle);
             return;
         }
+    }
+
+    // 管道不存在（ERROR_FILE_NOT_FOUND=2）通常表示服务未运行，
+    // 此时 STOP/START 等命令没有接收方，属正常情况，只记调试日志；
+    // 其他错误（拒绝访问、持续占用等）才需要告警提示。
+    if last_error == 2 {
+        log::debug!("服务未运行，跳过管道命令 '{}' ({})", command, PIPE_NAME);
+    } else {
+        log::warn!(
+            "无法连接到命名管道 {}（已重试 3 次，错误码 {}）: {}",
+            PIPE_NAME,
+            last_error,
+            command
+        );
     }
 }
 

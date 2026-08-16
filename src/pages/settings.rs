@@ -101,8 +101,9 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> gpui::AnyElement
                                 .when(view.is_checking_update || view.is_downloading, |b| {
                                     b.disabled(true)
                                 })
-                                .on_click(cx.listener(|view, _event, _window, cx| {
-                                    view.start_download(cx);
+                                .on_click(cx.listener(|view, _event, window, cx| {
+                                    // 先检查版本：有更新且 frpc 正在运行时，才会在下载前弹窗确认
+                                    view.start_download(window, cx);
                                 }))
                         })
                         .when(view.is_checking_update, |el| {
@@ -339,6 +340,17 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> gpui::AnyElement
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(cx.theme().foreground)
                                 .child("日志"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("打印级别"),
+                        )
+                        .child(
+                            div()
+                                .w(px(140.0))
+                                .child(Select::new(&view.log_level_select)),
                         )
                         .child(
                             Button::new("btn-open-logs")

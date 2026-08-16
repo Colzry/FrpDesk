@@ -5,9 +5,11 @@ use gpui::{
     div, prelude::*, px, size, App, Bounds, Context, Entity, SharedString, Task, TitlebarOptions,
     Window, WindowBounds, WindowOptions,
 };
-use gpui_component::input::InputState;
+use gpui_component::dialog::DialogButtonProps;
+use gpui_component::input::{EditorState, InputState};
 use gpui_component::select::{SelectEvent, SelectState};
-use gpui_component::{ActiveTheme, IndexPath, Root};
+use gpui_component::{ActiveTheme, IndexPath, Root, WindowExt};
+use log::LevelFilter;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -16,6 +18,7 @@ use std::time::Duration;
 use crate::config::{self, FrpcConfigMeta};
 use crate::download;
 use crate::frpc_mg::FrpcProcess;
+use crate::logger;
 use crate::message::MessageLevel;
 use crate::pages;
 use crate::service::{self, PreCheckResult};
@@ -47,7 +50,7 @@ pub(crate) struct AppView {
     pub edit_content: String,
     pub edit_auto_start: bool,
     pub name_input: Entity<InputState>,
-    pub content_input: Entity<InputState>,
+    pub content_input: Entity<EditorState>,
     pub frpc_version: Option<String>,
     pub is_checking_update: bool,
     pub is_downloading: bool,
@@ -57,6 +60,7 @@ pub(crate) struct AppView {
     pub status_level: MessageLevel,
     pub config_page: usize,
     pub theme_select: Entity<SelectState<Vec<SharedString>>>,
+    pub log_level_select: Entity<SelectState<Vec<SharedString>>>,
     pub process_guard: bool,
 }
 
@@ -64,8 +68,9 @@ impl AppView {
     pub fn new(
         pre_check: PreCheckResult,
         name_input: Entity<InputState>,
-        content_input: Entity<InputState>,
+        content_input: Entity<EditorState>,
         theme_select: Entity<SelectState<Vec<SharedString>>>,
+        log_level_select: Entity<SelectState<Vec<SharedString>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -107,6 +112,7 @@ impl AppView {
             status_level: MessageLevel::Info,
             config_page: 0,
             theme_select: theme_select.clone(),
+            log_level_select: log_level_select.clone(),
             process_guard: config::load_settings().process_guard,
         };
 
@@ -114,6 +120,16 @@ impl AppView {
         cx.subscribe_in(&theme_select, window, |view, _entity, event, window, cx| {
             view.on_theme_selected(event, window, cx);
         })
+        .detach();
+
+        // 订阅日志级别下拉选择事件
+        cx.subscribe_in(
+            &log_level_select,
+            window,
+            |view, _entity, event, window, cx| {
+                view.on_log_level_selected(event, window, cx);
+            },
+        )
         .detach();
 
         s
@@ -135,8 +151,10 @@ impl AppView {
             return;
         }
         self.process_guard = !self.process_guard;
+        // 保留其他设置（如日志级别）
         let settings = config::AppSettings {
             process_guard: self.process_guard,
+            ..config::load_settings()
         };
         match config::save_settings(&settings) {
             Ok(()) => {
@@ -192,6 +210,57 @@ impl AppView {
                 MessageLevel::Success,
                 cx,
             );
+        }
+    }
+
+    pub fn on_log_level_selected(
+        &mut self,
+        event: &SelectEvent<Vec<SharedString>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let SelectEvent::Confirm(Some(level)) = event {
+            let level_str = level.to_string().to_lowercase();
+            let filter = match level_str.as_str() {
+                "off" => LevelFilter::Off,
+                "error" => LevelFilter::Error,
+                "warn" => LevelFilter::Warn,
+                "debug" => LevelFilter::Debug,
+                "trace" => LevelFilter::Trace,
+                _ => LevelFilter::Info,
+            };
+            match logger::set_log_level(filter) {
+                Ok(()) => {
+                    // 持久化设置
+                    let mut settings = config::load_settings();
+                    settings.log_level = level_str.clone();
+                    match config::save_settings(&settings) {
+                        Ok(()) => {
+                            self.set_status_message(
+                                format!("日志级别已切换为 '{}'", level_str),
+                                MessageLevel::Success,
+                                cx,
+                            );
+                        }
+                        Err(e) => {
+                            log::error!("保存日志级别设置失败: {}", e);
+                            self.set_status_message(
+                                format!("保存设置失败：{}", e),
+                                MessageLevel::Error,
+                                cx,
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("切换日志级别失败: {}", e);
+                    self.set_status_message(
+                        format!("切换日志级别失败：{}", e),
+                        MessageLevel::Error,
+                        cx,
+                    );
+                }
+            }
         }
     }
 
@@ -557,12 +626,15 @@ impl AppView {
         }
     }
 
-    pub fn start_download(&mut self, cx: &mut Context<Self>) {
+    pub fn start_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.is_checking_update = true;
         self.is_downloading = false;
         self.download_percent = 0;
         self.status_message = None;
         cx.notify();
+
+        // 记录窗口句柄，供异步回调中打开确认弹窗
+        let window_handle = window.window_handle();
 
         // 第一步：在后台检查版本
         let check_task: Task<Result<Option<String>>> =
@@ -570,13 +642,12 @@ impl AppView {
 
         cx.spawn(async move |this, cx| {
             let result = check_task.await;
-            let should_download = this
+            let has_update = this
                 .update(cx, |view, cx| {
                     view.is_checking_update = false;
                     match result {
                         Ok(Some(tag)) => {
-                            log::info!("发现新版本: {}，开始下载", tag);
-                            view.is_downloading = true;
+                            log::info!("发现新版本: {}", tag);
                             cx.notify();
                             true
                         }
@@ -601,75 +672,149 @@ impl AppView {
                 })
                 .unwrap_or(false);
 
-            if !should_download {
+            if !has_update {
                 return;
             }
 
-            // 第二步：启动下载
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let progress = Arc::new(AtomicU64::new(0));
-            let pc = progress.clone();
+            // 有更新：若 frpc 正在运行，先弹窗确认（确认后才停止 frpc 并下载）
+            let has_running = this
+                .update(cx, |view, _| {
+                    !view.running.is_empty()
+                        || !service::discover_running_frpc_processes().is_empty()
+                })
+                .unwrap_or(false);
 
-            // 启动进度更新循环
-            this.update(cx, |_, cx| {
-                cx.spawn(async move |this, cx| loop {
-                    cx.background_spawn(async {
-                        std::thread::sleep(Duration::from_millis(200));
-                    })
-                    .await;
-                    let ok = this
-                        .update(cx, |v, cx| {
-                            if v.is_downloading {
-                                v.download_percent = pc.load(Ordering::Relaxed);
-                                cx.notify();
+            if has_running {
+                let entity = this;
+                let _ = cx.update_window(window_handle, |_root, window, cx| {
+                    window.open_alert_dialog(cx, move |alert, _window, _cx| {
+                        let entity = entity.clone();
+                        alert
+                            .title("停止 frpc 并更新？")
+                            .description(
+                                "检测到 frpc 正在运行，更新前需要先停止 frpc 进程，更新完成后会自动重启。是否继续？",
+                            )
+                            .button_props(
+                                DialogButtonProps::default()
+                                    .ok_text("停止并更新")
+                                    .cancel_text("取消")
+                                    .show_cancel(true),
+                            )
+                            .on_ok(move |_event, _window, cx| {
+                                let _ = entity.update(cx, |view, cx| view.do_download(cx));
                                 true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if !ok {
-                        break;
+                            })
+                    });
+                });
+            } else {
+                // frpc 未运行，直接下载
+                this.update(cx, |view, cx| view.do_download(cx)).ok();
+            }
+        })
+        .detach();
+    }
+
+    /// 执行实际下载：先停止运行中的 frpc，下载解压后再自动重启
+    fn do_download(&mut self, cx: &mut Context<Self>) {
+        self.is_downloading = true;
+        cx.notify();
+
+        // 更新前先停止所有运行中的 frpc：Windows 下运行中的 frpc.exe 会被锁定，
+        // 无法被替换，导致解压失败。记录被停止的配置名，更新完成后自动重启。
+        let to_restart: Vec<String> = {
+            let mut names: Vec<String> = Vec::new();
+            // 1. 由 UI 管理的进程
+            for (name, mut rp) in self.running.drain() {
+                self.stopped_configs.insert(name.clone());
+                service::send_guard_stopped_command(&format!("STOP:{}", name));
+                if let Err(e) = rp.process.stop() {
+                    log::error!("[{}] 更新前停止 frpc 失败: {}", name, e);
+                }
+                names.push(name);
+            }
+            // 2. 由服务或外部启动、未被 UI 跟踪的 frpc 进程
+            for (name, pid) in service::discover_running_frpc_processes() {
+                if !names.contains(&name) {
+                    self.stopped_configs.insert(name.clone());
+                    service::send_guard_stopped_command(&format!("STOP:{}", name));
+                    if let Err(e) = FrpcProcess::kill_pid(pid) {
+                        log::error!("[{}] 更新前终止 frpc 失败 (PID: {}): {}", name, pid, e);
+                    }
+                    names.push(name);
+                }
+            }
+            names
+        };
+
+        // 第二步：启动下载
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let progress = Arc::new(AtomicU64::new(0));
+        let pc = progress.clone();
+
+        // 启动进度更新循环
+        cx.spawn(async move |this, cx| loop {
+            cx.background_spawn(async {
+                std::thread::sleep(Duration::from_millis(200));
+            })
+            .await;
+            let ok = this
+                .update(cx, |v, cx| {
+                    if v.is_downloading {
+                        v.download_percent = pc.load(Ordering::Relaxed);
+                        cx.notify();
+                        true
+                    } else {
+                        false
                     }
                 })
-                .detach();
+                .unwrap_or(false);
+            if !ok {
+                break;
+            }
+        })
+        .detach();
+
+        // 在后台执行下载
+        let download_task: Task<Result<()>> = cx.background_spawn(async move {
+            download::download_and_extract_frpc(&exe_dir, &move |d, t| {
+                progress.store(
+                    if t > 0 { (d * 100 / t).min(100) } else { 0 },
+                    Ordering::Relaxed,
+                );
             })
-            .ok();
+        });
 
-            // 在后台执行下载
-            let download_result = cx
-                .background_spawn(async move {
-                    download::download_and_extract_frpc(&exe_dir, &move |d, t| {
-                        progress.store(
-                            if t > 0 { (d * 100 / t).min(100) } else { 0 },
-                            Ordering::Relaxed,
-                        );
-                    })
-                })
-                .await;
-
-            // 下载完成，更新 UI
+        // 下载完成，更新 UI 并重启之前停止的配置
+        cx.spawn(async move |this, cx| {
+            let download_result = download_task.await;
             this.update(cx, |view, cx| {
                 view.is_downloading = false;
                 match download_result {
                     Ok(()) => {
                         view.set_status_message(
-                            "下载成功！".to_string(),
+                            "frpc 更新成功".to_string(),
                             MessageLevel::Success,
                             cx,
                         );
                         view.detect_frpc_version(cx);
                     }
                     Err(e) => {
+                        log::error!("更新失败: {}", e);
                         view.set_status_message(
-                            format!("下载失败：{}", e),
+                            format!("更新失败：{}", e),
                             MessageLevel::Error,
                             cx,
                         );
                     }
+                }
+                // 无论更新成功与否，都恢复更新前运行中的 frpc
+                for name in &to_restart {
+                    view.stopped_configs.remove(name);
+                    service::send_guard_stopped_command(&format!("START:{}", name));
+                    view.start_config(name, cx);
                 }
                 cx.notify();
             })
@@ -773,6 +918,7 @@ impl AppView {
                         v.process_guard = false;
                         let settings = config::AppSettings {
                             process_guard: false,
+                            ..config::load_settings()
                         };
                         if let Err(e) = config::save_settings(&settings) {
                             log::error!("保存进程守护设置失败: {}", e);
@@ -910,7 +1056,7 @@ impl AppView {
 }
 
 impl gpui::Render for AppView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sb = sidebar::render(self, cx);
         let content = match &self.page {
             Page::ConfigList => pages::config_list::render(self, cx),
@@ -925,6 +1071,8 @@ impl gpui::Render for AppView {
             .child(sb)
             .child(div().w(px(1.0)).h_full().bg(cx.theme().border))
             .child(content)
+            // Dialog 等悬浮层需要由根视图手动挂载，否则弹窗不会显示
+            .children(Root::render_dialog_layer(window, cx))
     }
 }
 
@@ -957,7 +1105,7 @@ pub fn run_app(pre_check: PreCheckResult) {
             },
             move |window, cx| {
                 let name_input = cx.new(|cx| InputState::new(window, cx));
-                let content_input = cx.new(|cx| InputState::new(window, cx).code_editor("toml"));
+                let content_input = cx.new(|cx| EditorState::new(window, cx).language("toml"));
 
                 // 创建主题下拉选择
                 let themes = theme::available_themes();
@@ -969,12 +1117,27 @@ pub fn run_app(pre_check: PreCheckResult) {
                 let theme_select =
                     cx.new(|cx| SelectState::new(theme_names, selected_index, window, cx));
 
+                // 日志级别下拉
+                let log_levels: Vec<SharedString> =
+                    ["off", "error", "warn", "info", "debug", "trace"]
+                        .iter()
+                        .map(|s| SharedString::from(*s))
+                        .collect();
+                let current_level = config::load_settings().log_level.to_lowercase();
+                let selected = log_levels
+                    .iter()
+                    .position(|s| s.to_string() == current_level);
+                let selected_index = selected.map(|i| IndexPath::default().row(i));
+                let log_level_select =
+                    cx.new(|cx| SelectState::new(log_levels, selected_index, window, cx));
+
                 let app_view = cx.new(|cx| {
                     let mut v = AppView::new(
                         init,
                         name_input,
                         content_input,
                         theme_select.clone(),
+                        log_level_select.clone(),
                         window,
                         cx,
                     );
