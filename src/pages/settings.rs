@@ -205,7 +205,7 @@ pub fn render(view: &mut AppView, cx: &mut Context<AppView>) -> gpui::AnyElement
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("服务注册后，开启自启动的配置会开机自启。"),
+                        .child("服务注册后，开启自启动的配置会开机自启。若服务注册报错，请以管理员身份运行程序。"),
                 ),
         )
         .child(div().mx(px(24.0)).child(separator(cx.theme())))
