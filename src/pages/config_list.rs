@@ -6,9 +6,10 @@ use crate::message;
 use crate::message::MessageLevel;
 use gpui::prelude::*;
 use gpui::{div, px, ClipboardItem, FontWeight};
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_component::dialog::DialogButtonProps;
 use gpui_component::spinner::Spinner;
-use gpui_component::{ActiveTheme, Disableable, Sizable, Size};
+use gpui_component::{ActiveTheme, Disableable, Sizable, Size, WindowExt};
 
 use crate::app::AppView;
 
@@ -453,8 +454,32 @@ fn render_config_card(
                         Button::new(format!("btn-delete-{}", name))
                             .ghost()
                             .icon(AppIcon::Trash)
-                            .on_click(cx.listener(move |view, _event, _window, cx| {
-                                view.delete_config(&name_for_delete, cx);
+                            .on_click(cx.listener(move |_view, _event, window, cx| {
+                                // 弹窗确认后再删除
+                                let entity = cx.entity();
+                                let nc = name_for_delete.clone();
+                                window.open_alert_dialog(cx, move |alert, _window, _cx| {
+                                    let entity = entity.clone();
+                                    let nc = nc.clone();
+                                    alert
+                                        .title("删除配置？")
+                                        .description(format!(
+                                            "确定要删除配置 '{}' 吗？此操作不可恢复。",
+                                            nc
+                                        ))
+                                        .button_props(
+                                            DialogButtonProps::default()
+                                                .ok_text("删除")
+                                                .ok_variant(ButtonVariant::Danger)
+                                                .cancel_text("取消")
+                                                .show_cancel(true),
+                                        )
+                                        .on_ok(move |_event, _window, cx| {
+                                            entity
+                                                .update(cx, |view, cx| view.delete_config(&nc, cx));
+                                            true
+                                        })
+                                });
                             })),
                     ),
                 );
