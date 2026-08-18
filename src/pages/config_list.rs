@@ -6,7 +6,7 @@ use crate::message;
 use crate::message::MessageLevel;
 use gpui::prelude::*;
 use gpui::{div, px, ClipboardItem, FontWeight};
-use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants};
 use gpui_component::dialog::DialogButtonProps;
 use gpui_component::spinner::Spinner;
 use gpui_component::{ActiveTheme, Disableable, Sizable, Size, WindowExt};
@@ -400,11 +400,16 @@ fn render_config_card(
             let divider = || div().w(px(1.0)).h(px(16.0)).bg(border_color);
             let mut actions = div().flex().items_center().w_full();
 
-            // 停止 / 启动（outline：背景色悬停时才明显显示）
+            // 停止 / 启动
             actions = actions.child(div().flex_1().flex().justify_center().child(if is_running {
                 Button::new(format!("btn-stop-{}", name))
-                    .danger()
-                    .outline()
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .foreground(cx.theme().danger)
+                            .hover(cx.theme().danger.opacity(0.15))
+                            .active(cx.theme().danger.opacity(0.3)),
+                    )
+                    .tooltip("停止")
                     .icon(AppIcon::Square)
                     .on_click(cx.listener(move |view, _event, _window, cx| {
                         view.stop_config(&name_for_action, cx);
@@ -412,8 +417,13 @@ fn render_config_card(
                     .into_any_element()
             } else {
                 Button::new(format!("btn-start-{}", name))
-                    .success()
-                    .outline()
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .foreground(cx.theme().success)
+                            .hover(cx.theme().success.opacity(0.15))
+                            .active(cx.theme().success.opacity(0.3)),
+                    )
+                    .tooltip("启动")
                     .icon(AppIcon::Play)
                     .on_click(cx.listener(move |view, _event, _window, cx| {
                         view.start_config(&name_for_action, cx);
@@ -428,6 +438,7 @@ fn render_config_card(
                     div().flex_1().flex().justify_center().child(
                         Button::new(format!("btn-restart-{}", name))
                             .ghost()
+                            .tooltip("重启")
                             .icon(AppIcon::RotateCcw)
                             .on_click(cx.listener(move |view, _event, _window, cx| {
                                 view.restart_config(&name_for_restart, cx);
@@ -442,6 +453,7 @@ fn render_config_card(
                     div().flex_1().flex().justify_center().child(
                         Button::new(format!("btn-edit-{}", name))
                             .ghost()
+                            .tooltip("编辑")
                             .icon(AppIcon::SquarePen)
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 view.open_edit_config(&name_for_edit, window, cx);
@@ -453,6 +465,7 @@ fn render_config_card(
                     div().flex_1().flex().justify_center().child(
                         Button::new(format!("btn-delete-{}", name))
                             .ghost()
+                            .tooltip("删除")
                             .icon(AppIcon::Trash)
                             .on_click(cx.listener(move |_view, _event, window, cx| {
                                 // 弹窗确认后再删除
