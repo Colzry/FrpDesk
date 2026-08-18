@@ -626,6 +626,58 @@ impl AppView {
         }
     }
 
+    /// 重启配置：先停止当前进程，停止成功后再重新启动
+    pub fn restart_config(&mut self, name: &str, cx: &mut Context<Self>) {
+        // 未在运行则直接启动
+        if !self.running.contains_key(name) {
+            self.start_config(name, cx);
+            return;
+        }
+
+        // 先标记停止并通知 Service，避免守护在重启间隙自动拉起进程
+        self.stopped_configs.insert(name.to_string());
+        service::send_guard_stopped_command(&format!("STOP:{}", name));
+        if let Some(mut rp) = self.running.remove(name) {
+            self.is_processing = true;
+            self.status_message = None;
+            cx.notify();
+            let task: Task<Result<()>> = cx.background_spawn(async move {
+                rp.process.stop()?;
+                Ok(())
+            });
+            let nc = name.to_string();
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |view, cx| {
+                    view.is_processing = false;
+                    match result {
+                        Ok(()) => {
+                            log::info!("[{}] frpc 已停止，准备重启", nc);
+                            // 清除停止标记并重新启动
+                            view.stopped_configs.remove(&nc);
+                            service::send_guard_stopped_command(&format!("START:{}", nc));
+                            view.start_config(&nc, cx);
+                        }
+                        Err(e) => {
+                            log::error!("[{}] 重启时停止失败: {}", nc, e);
+                            // 恢复状态：取消停止标记，避免守护行为与实际不一致
+                            view.stopped_configs.remove(&nc);
+                            service::send_guard_stopped_command(&format!("START:{}", nc));
+                            view.set_status_message(
+                                format!("'{}' 重启失败：{}", nc, e),
+                                MessageLevel::Error,
+                                cx,
+                            );
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
     pub fn start_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.is_checking_update = true;
         self.is_downloading = false;

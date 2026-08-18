@@ -394,29 +394,49 @@ fn render_config_card(
         })
         // 分割线
         .child(div().w_full().h(px(1.0)).bg(cx.theme().border))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .w_full()
-                .child(div().flex_1().flex().justify_center().child(if is_running {
-                    Button::new(format!("btn-stop-{}", name))
-                        .danger()
-                        .icon(AppIcon::Square)
-                        .on_click(cx.listener(move |view, _event, _window, cx| {
-                            view.stop_config(&name_for_action, cx);
-                        }))
-                        .into_any_element()
-                } else {
-                    Button::new(format!("btn-start-{}", name))
-                        .success()
-                        .icon(AppIcon::Play)
-                        .on_click(cx.listener(move |view, _event, _window, cx| {
-                            view.start_config(&name_for_action, cx);
-                        }))
-                        .into_any_element()
-                }))
-                .child(div().w(px(1.0)).h(px(16.0)).bg(cx.theme().border))
+        .child({
+            let border_color = cx.theme().border;
+            let divider = || div().w(px(1.0)).h(px(16.0)).bg(border_color);
+            let mut actions = div().flex().items_center().w_full();
+
+            // 停止 / 启动（outline：背景色悬停时才明显显示）
+            actions = actions.child(div().flex_1().flex().justify_center().child(if is_running {
+                Button::new(format!("btn-stop-{}", name))
+                    .danger()
+                    .outline()
+                    .icon(AppIcon::Square)
+                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                        view.stop_config(&name_for_action, cx);
+                    }))
+                    .into_any_element()
+            } else {
+                Button::new(format!("btn-start-{}", name))
+                    .success()
+                    .outline()
+                    .icon(AppIcon::Play)
+                    .on_click(cx.listener(move |view, _event, _window, cx| {
+                        view.start_config(&name_for_action, cx);
+                    }))
+                    .into_any_element()
+            }));
+
+            // 重启（仅运行中的配置显示）
+            if is_running {
+                let name_for_restart = name.clone();
+                actions = actions.child(divider()).child(
+                    div().flex_1().flex().justify_center().child(
+                        Button::new(format!("btn-restart-{}", name))
+                            .ghost()
+                            .icon(AppIcon::RotateCcw)
+                            .on_click(cx.listener(move |view, _event, _window, cx| {
+                                view.restart_config(&name_for_restart, cx);
+                            })),
+                    ),
+                );
+            }
+
+            actions = actions
+                .child(divider())
                 .child(
                     div().flex_1().flex().justify_center().child(
                         Button::new(format!("btn-edit-{}", name))
@@ -427,7 +447,7 @@ fn render_config_card(
                             })),
                     ),
                 )
-                .child(div().w(px(1.0)).h(px(16.0)).bg(cx.theme().border))
+                .child(divider())
                 .child(
                     div().flex_1().flex().justify_center().child(
                         Button::new(format!("btn-delete-{}", name))
@@ -437,7 +457,9 @@ fn render_config_card(
                                 view.delete_config(&name_for_delete, cx);
                             })),
                     ),
-                ),
-        )
+                );
+
+            actions
+        })
         .into_any_element()
 }
