@@ -9,7 +9,7 @@ use gpui::{div, px, ClipboardItem, FontWeight};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants};
 use gpui_component::dialog::DialogButtonProps;
 use gpui_component::spinner::Spinner;
-use gpui_component::{ActiveTheme, Disableable, Sizable, Size, WindowExt};
+use gpui_component::{ActiveTheme, Disableable, Icon, Sizable, Size, WindowExt};
 
 use crate::app::AppView;
 
@@ -310,6 +310,7 @@ fn render_config_card(
                     .ghost()
                     .with_size(Size::XSmall)
                     .compact()
+                    .tooltip("点击复制")
                     .label(server_addr_display)
                     .when(can_copy, |b| {
                         b.on_click(cx.listener(move |view, _event, _window, cx| {
@@ -355,15 +356,27 @@ fn render_config_card(
                             .items_center()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format!("{} {}->", ptype, local)),
+                                    .flex()
+                                    .items_center()
+                                    .gap_x(px(4.0))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(format!("{} {}", ptype, local)),
+                                    )
+                                    .child(
+                                        Icon::new(AppIcon::ArrowRight)
+                                            .text_color(cx.theme().muted_foreground)
+                                            .with_size(Size::XSmall),
+                                    ),
                             )
                             .child(
                                 Button::new(btn_id)
                                     .ghost()
                                     .with_size(Size::XSmall)
                                     .compact()
+                                    .tooltip("点击复制")
                                     .label(remote)
                                     .when(can_copy, |b| {
                                         b.on_click(cx.listener(move |view, _event, _window, cx| {

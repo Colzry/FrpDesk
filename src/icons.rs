@@ -8,6 +8,7 @@ use std::borrow::Cow;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AppIcon {
     ArrowLeft,
+    ArrowRight,
     CircleCheckGreen,
     CircleXRed,
     FileSliders,
@@ -32,6 +33,7 @@ impl IconNamed for AppIcon {
     fn path(self) -> SharedString {
         match self {
             Self::ArrowLeft => "icons/arrow-left.svg".into(),
+            Self::ArrowRight => "icons/arrow-right.svg".into(),
             Self::CircleCheckGreen => "icons/circle-check-green.svg".into(),
             Self::CircleXRed => "icons/circle-x-red.svg".into(),
             Self::FileSliders => "icons/file-sliders.svg".into(),
@@ -62,6 +64,9 @@ impl gpui::AssetSource for AppAssets {
         let data: Option<Cow<'static, [u8]>> = match path {
             "icons/arrow-left.svg" => Some(Cow::Borrowed(
                 include_bytes!("../icons/arrow-left.svg") as &[u8],
+            )),
+            "icons/arrow-right.svg" => Some(Cow::Borrowed(
+                include_bytes!("../icons/arrow-right.svg") as &[u8],
             )),
             "icons/circle-check-green.svg" => Some(Cow::Borrowed(include_bytes!(
                 "../icons/circle-check-green.svg"
