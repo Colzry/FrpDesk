@@ -444,6 +444,54 @@ impl AppView {
         }
     }
 
+    /// 复制配置：以源配置的 toml 内容创建一个新配置，名称自动追加 -copy 后缀
+    pub fn duplicate_config(&mut self, name: &str, cx: &mut Context<Self>) {
+        let content = match config::read_config_content(name) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("复制配置 '{}' 失败: {}", name, e);
+                self.set_status_message(format!("复制失败：{}", e), MessageLevel::Error, cx);
+                return;
+            }
+        };
+
+        // 继承源配置的元数据（自启动、服务器地址、代理列表）
+        let source_meta = self.configs.iter().find(|c| c.name == name).cloned();
+        let auto_start = source_meta.as_ref().map(|m| m.auto_start).unwrap_or(false);
+        let server_addr = source_meta
+            .as_ref()
+            .map(|m| m.server_addr.clone())
+            .unwrap_or_default();
+        let proxies = source_meta.map(|m| m.proxies).unwrap_or_default();
+
+        // 生成不重复的新名称：xxx-copy、xxx-copy-2、xxx-copy-3 ...
+        let existing: Vec<String> = self.configs.iter().map(|c| c.name.clone()).collect();
+        let mut new_name = format!("{}-copy", name);
+        if existing.contains(&new_name) {
+            let mut i = 2;
+            while existing.contains(&format!("{}-copy-{}", name, i)) {
+                i += 1;
+            }
+            new_name = format!("{}-copy-{}", name, i);
+        }
+
+        match config::save_config(&new_name, &content, auto_start, &server_addr, proxies) {
+            Ok(()) => {
+                log::info!("配置 '{}' 已复制为 '{}'", name, new_name);
+                self.reload_configs(cx);
+                self.set_status_message(
+                    format!("已复制配置为 '{}'", new_name),
+                    MessageLevel::Success,
+                    cx,
+                );
+            }
+            Err(e) => {
+                log::error!("复制配置 '{}' 失败: {}", name, e);
+                self.set_status_message(format!("复制失败：{}", e), MessageLevel::Error, cx);
+            }
+        }
+    }
+
     pub fn start_config(&mut self, name: &str, cx: &mut Context<Self>) {
         if self.running.contains_key(name) {
             return;

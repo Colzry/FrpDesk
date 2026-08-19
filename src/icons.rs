@@ -10,6 +10,7 @@ pub enum AppIcon {
     ArrowLeft,
     ArrowRight,
     CircleCheckGreen,
+    CopyPlus,
     CircleXRed,
     FileSliders,
     FileSlidersBlack,
@@ -35,6 +36,7 @@ impl IconNamed for AppIcon {
             Self::ArrowLeft => "icons/arrow-left.svg".into(),
             Self::ArrowRight => "icons/arrow-right.svg".into(),
             Self::CircleCheckGreen => "icons/circle-check-green.svg".into(),
+            Self::CopyPlus => "icons/copy-plus.svg".into(),
             Self::CircleXRed => "icons/circle-x-red.svg".into(),
             Self::FileSliders => "icons/file-sliders.svg".into(),
             Self::FileSlidersBlack => "icons/file-sliders-black.svg".into(),
@@ -71,6 +73,9 @@ impl gpui::AssetSource for AppAssets {
             "icons/circle-check-green.svg" => Some(Cow::Borrowed(include_bytes!(
                 "../icons/circle-check-green.svg"
             ) as &[u8])),
+            "icons/copy-plus.svg" => Some(Cow::Borrowed(
+                include_bytes!("../icons/copy-plus.svg") as &[u8]
+            )),
             "icons/circle-x-red.svg" => Some(Cow::Borrowed(include_bytes!(
                 "../icons/circle-x-red.svg"
             ) as &[u8])),

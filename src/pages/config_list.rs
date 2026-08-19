@@ -222,6 +222,7 @@ fn render_config_card(
     let name_for_action = name.clone();
     let name_for_edit = name.clone();
     let name_for_delete = name.clone();
+    let name_for_copy = name.clone();
 
     let status_text = if is_running { "运行中" } else { "未启动" };
     let status_color = if is_running {
@@ -275,6 +276,8 @@ fn render_config_card(
                 .flex()
                 .items_center()
                 .justify_between()
+                // 悬停标题栏时显示复制按钮
+                .group(format!("cfg-title-{}", name))
                 .child(
                     div()
                         .flex_1()
@@ -291,6 +294,21 @@ fn render_config_card(
                         .flex()
                         .items_center()
                         .gap_x(px(6.0))
+                        .child(
+                            div()
+                                .invisible()
+                                .group_hover(format!("cfg-title-{}", name), |s| s.visible())
+                                .child(
+                                    Button::new(format!("btn-copy-config-{}", name))
+                                        .ghost()
+                                        .with_size(Size::XSmall)
+                                        .tooltip("复制配置")
+                                        .icon(AppIcon::CopyPlus)
+                                        .on_click(cx.listener(move |view, _event, _window, cx| {
+                                            view.duplicate_config(&name_for_copy, cx);
+                                        })),
+                                ),
+                        )
                         .child(div().text_xs().text_color(status_color).child(status_text))
                         .child(
                             div()
